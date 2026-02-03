@@ -1500,32 +1500,45 @@ deleteArea(areaName) {
 // ============================================
 const App = {
 init() {
-this.checkFirstRun();
-this.setupTheme();
-this.setupNavigation();
-this.setupLogout();
-// Check if user is logged in
+    // Basic wiring that doesn't depend on auth state
+    this.setupTheme();
+    this.setupNavigation();
+    this.setupLogout();
+
+    // FIRST-RUN / RECOVERY FLOW:
+    // If no users (or no admin), show Create Admin and stop here.
+    const didShowCreateAdmin = this.checkFirstRun();
+    if (didShowCreateAdmin) return;
+
+    // Normal flow: decide between app vs login
     const user = Auth.getCurrentUser();
     if (user) {
         this.showMainApp();
     } else {
         UI.switchScreen('login-screen');
+        this.setupLoginForm();
     }
-    
-    this.setupLoginForm();
 },
 
 checkFirstRun() {
-    const users = Storage.getUsers();
-    if (users.length === 0) {
-        // First run - show create admin screen
-        const areas = Storage.getAreas();
-        if (areas.length === 0) {
+    // Always treat missing/invalid users as empty array
+    const users = Storage.getUsers() || [];
+    const hasAdmin = Array.isArray(users) && users.some(u => u && u.role === 'admin' && !u.disabled);
+
+    // If no users OR no admin, force Create Admin
+    if (!Array.isArray(users) || users.length === 0 || !hasAdmin) {
+        // Preload default areas if needed
+        const areas = Storage.getAreas() || [];
+        if (!Array.isArray(areas) || areas.length === 0) {
             Storage.saveAreas(CONFIG.DEFAULT_AREAS);
         }
+
         UI.switchScreen('create-admin-screen');
         this.setupCreateAdminForm();
+        return true;
     }
+
+    return false;
 },
 
 setupCreateAdminForm() {
@@ -1671,4 +1684,5 @@ if (document.readyState === 'loading') {
 document.addEventListener('DOMContentLoaded', () => App.init());
 } else {
 App.init();
+
 }
