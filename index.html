@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Headcount Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Toast Notifications -->
+    <div id="toast-container"></div>
+
+    <!-- Login Screen -->
+    <div id="login-screen" class="screen">
+        <div class="login-container">
+            <h1>Headcount Tracker</h1>
+            <div id="login-form">
+                <input type="text" id="login-username" placeholder="Username" autocomplete="username">
+                <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+                <div id="login-error" class="error-message"></div>
+                <button id="login-btn">Login</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- First Run: Create Admin -->
+    <div id="create-admin-screen" class="screen" style="display: none;">
+        <div class="login-container">
+            <h1>Setup Admin Account</h1>
+            <p>No users exist. Create the first admin account.</p>
+            <input type="text" id="admin-username" placeholder="Admin Username" autocomplete="off">
+            <input type="password" id="admin-password" placeholder="Admin Password" autocomplete="new-password">
+            <input type="password" id="admin-password-confirm" placeholder="Confirm Password" autocomplete="new-password">
+            <div id="admin-error" class="error-message"></div>
+            <button id="create-admin-btn">Create Admin</button>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="app-screen" class="screen" style="display: none;">
+        <!-- Top Bar -->
+        <header class="top-bar">
+            <div class="top-bar-content">
+                <h1>Headcount Tracker</h1>
+                <div class="top-bar-actions">
+                    <button id="theme-toggle" class="icon-btn" title="Toggle Theme">🌙</button>
+                    <button id="logout-btn" class="icon-btn" title="Logout">Logout</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main id="main-content">
+            <!-- Home View -->
+            <div id="home-view" class="view">
+                <div class="view-header">
+                    <h2>Dashboard</h2>
+                    <div class="date-selector">
+                        <input type="date" id="home-date" class="date-input">
+                    </div>
+                </div>
+
+                <div class="stats-cards">
+                    <div class="stat-card">
+                        <div class="stat-label">Total Present</div>
+                        <div class="stat-value" id="home-total-present">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Confirmed Areas</div>
+                        <div class="stat-value" id="home-confirmed-count">0 / 0</div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>Unconfirmed Areas</h3>
+                    <div id="home-unconfirmed-list" class="unconfirmed-list"></div>
+                </div>
+
+                <div class="section">
+                    <h3>Area Status</h3>
+                    <div class="table-container">
+                        <table id="home-table">
+                            <thead>
+                                <tr>
+                                    <th>Area</th>
+                                    <th>Present</th>
+                                    <th>Confirmed</th>
+                                    <th>Updated</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="quick-actions">
+                    <button id="home-edit-today-btn" class="btn btn-primary">Edit Today</button>
+                    <button id="home-export-today-btn" class="btn btn-secondary">Export Today CSV</button>
+                </div>
+            </div>
+
+            <!-- Entry View -->
+            <div id="entry-view" class="view" style="display: none;">
+                <div class="view-header">
+                    <h2>Daily Headcount Entry</h2>
+                    <div class="date-selector">
+                        <input type="date" id="entry-date" class="date-input">
+                    </div>
+                </div>
+
+                <div class="entry-actions">
+                    <button id="entry-save-btn" class="btn btn-primary">Save</button>
+                    <button id="entry-confirm-all-btn" class="btn btn-secondary">Confirm All Valid</button>
+                    <button id="entry-clear-all-btn" class="btn btn-danger">Clear All</button>
+                    <button id="entry-show-audit-btn" class="btn btn-secondary">Show Audit</button>
+                </div>
+
+                <div id="entry-areas-container" class="entry-areas"></div>
+
+                <!-- Audit Drawer -->
+                <div id="audit-drawer" class="drawer" style="display: none;">
+                    <div class="drawer-header">
+                        <h3>Audit Trail (Last 10)</h3>
+                        <button id="audit-close-btn" class="icon-btn">✕</button>
+                    </div>
+                    <div id="audit-list" class="audit-list"></div>
+                </div>
+            </div>
+
+            <!-- Export View -->
+            <div id="export-view" class="view" style="display: none;">
+                <div class="view-header">
+                    <h2>Export Data</h2>
+                </div>
+
+                <div class="section">
+                    <h3>Single Day Export</h3>
+                    <div class="date-selector">
+                        <label>Select Date:</label>
+                        <input type="date" id="export-single-date" class="date-input">
+                    </div>
+                    <div id="export-single-summary" class="export-summary"></div>
+                    <button id="export-single-btn" class="btn btn-primary">Export CSV</button>
+                </div>
+
+                <div class="section">
+                    <h3>Date Range Export</h3>
+                    <div class="date-range">
+                        <div class="date-selector">
+                            <label>From:</label>
+                            <input type="date" id="export-range-from" class="date-input">
+                        </div>
+                        <div class="date-selector">
+                            <label>To:</label>
+                            <input type="date" id="export-range-to" class="date-input">
+                        </div>
+                    </div>
+                    <div id="export-range-summary" class="export-summary"></div>
+                    <button id="export-range-btn" class="btn btn-primary">Export Range CSV</button>
+                </div>
+            </div>
+
+            <!-- Backup View -->
+            <div id="backup-view" class="view" style="display: none;">
+                <div class="view-header">
+                    <h2>Backup & Maintenance</h2>
+                </div>
+
+                <div class="section">
+                    <h3>Export Backup</h3>
+                    <p>Download all application data as JSON.</p>
+                    <button id="backup-export-btn" class="btn btn-primary">Export Backup</button>
+                </div>
+
+                <div class="section">
+                    <h3>Import Backup</h3>
+                    <p>Restore data from a JSON backup file. This will overwrite existing data.</p>
+                    <input type="file" id="backup-import-input" accept=".json">
+                    <button id="backup-import-btn" class="btn btn-secondary">Import Backup</button>
+                </div>
+
+                <div class="section">
+                    <h3>Data Retention</h3>
+                    <div class="form-group">
+                        <label>Retention Days:</label>
+                        <input type="number" id="retention-days-input" min="1" max="730" value="180">
+                        <button id="retention-update-btn" class="btn btn-secondary">Update</button>
+                    </div>
+                    <p id="retention-info"></p>
+                    <button id="retention-clean-btn" class="btn btn-danger">Clean Old Data</button>
+                </div>
+            </div>
+
+            <!-- Admin View -->
+            <div id="admin-view" class="view" style="display: none;">
+                <div class="view-header">
+                    <h2>Administration</h2>
+                </div>
+
+                <!-- Users Management -->
+                <div class="section">
+                    <h3>Users Management</h3>
+                    <button id="admin-create-user-btn" class="btn btn-primary">Create User</button>
+                    <div class="table-container">
+                        <table id="admin-users-table">
+                            <thead>
+                                <tr>
+                                    <th>Username</th>
+                                    <th>Role</th>
+                                    <th>Areas</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Areas Management -->
+                <div class="section">
+                    <h3>Areas Management</h3>
+                    <button id="admin-add-area-btn" class="btn btn-primary">Add Area</button>
+                    <div class="table-container">
+                        <table id="admin-areas-table">
+                            <thead>
+                                <tr>
+                                    <th>Area Name</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Bottom Navigation -->
+        <nav class="bottom-nav">
+            <button class="nav-btn active" data-view="home">
+                <span class="nav-icon">🏠</span>
+                <span class="nav-label">Home</span>
+            </button>
+            <button class="nav-btn" data-view="entry">
+                <span class="nav-icon">📝</span>
+                <span class="nav-label">Entry</span>
+            </button>
+            <button class="nav-btn" data-view="export">
+                <span class="nav-icon">📊</span>
+                <span class="nav-label">Export</span>
+            </button>
+            <button class="nav-btn" data-view="backup">
+                <span class="nav-icon">💾</span>
+                <span class="nav-label">Backup</span>
+            </button>
+            <button class="nav-btn" data-view="admin" id="admin-nav-btn" style="display: none;">
+                <span class="nav-icon">⚙️</span>
+                <span class="nav-label">Admin</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- Modal Container -->
+    <div id="modal-container"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
