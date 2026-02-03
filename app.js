@@ -2,11 +2,13 @@
 // CONSTANTS & CONFIGURATION
 // ============================================
 const CONFIG = {
-    SESSION_DURATION: 8 * 60 * 60 * 1000, // 8 hours
-    LOCKOUT_DURATION: 5 * 60 * 1000, // 5 minutes
+    SESSION_DURATION: 8 * 60 * 60 * 1000,
+    LOCKOUT_DURATION: 5 * 60 * 1000,
     MAX_LOGIN_ATTEMPTS: 5,
-    DEBOUNCE_DELAY: 500, // ms
+    DEBOUNCE_DELAY: 300,
     MAX_AUDIT_ENTRIES: 10,
+    MAX_GLOBAL_DESIGNATION_HISTORY: 100,
+    MAX_AREA_DESIGNATION_HISTORY: 50,
     DEFAULT_RETENTION_DAYS: 180,
     DEFAULT_AREAS: [
         'TCF Facilities',
@@ -26,76 +28,69 @@ const CONFIG = {
 };
 
 const STORAGE_KEYS = {
-    SETTINGS: 'headcountSettings',
-    AREAS: 'headcountAreasMaster',
-    USERS: 'headcountUsers',
-    SESSION: 'headcountSession',
-    ATTENDANCE: 'headcountAttendance'
+    SETTINGS: 'hc_settings',
+    AREAS: 'hc_areas',
+    USERS: 'hc_users',
+    SESSION: 'hc_session',
+    ATTENDANCE: 'hc_attendance',
+    DESIGNATION_HISTORY: 'hc_designation_history'
 };
 
 // ============================================
 // UTILITY FUNCTIONS
 // ============================================
 const Utils = {
-    // Date formatting
     formatDate(date) {
         if (!(date instanceof Date)) date = new Date(date);
         return date.toISOString().split('T')[0];
     },
-    
+
     getTodayString() {
         return this.formatDate(new Date());
     },
-    
+
     formatDateTime(timestamp) {
-        const date = new Date(timestamp);
-        return date.toLocaleString();
+        return new Date(timestamp).toLocaleString();
     },
-    
-    // Crypto functions for password hashing
+
+    normalizeDesignation(text) {
+        return text.trim().replace(/\s+/g, ' ').toLowerCase();
+    },
+
     async generateSalt() {
         const array = new Uint8Array(16);
         crypto.getRandomValues(array);
-        return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+        return Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
     },
-    
+
     async hashPassword(password, salt) {
         const encoder = new TextEncoder();
         const data = encoder.encode(password + salt);
         const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        return Array.from(new Uint8Array(hashBuffer))
+            .map(b => b.toString(16).padStart(2, '0')).join('');
     },
-    
-    // Random password generator
+
     generatePassword(length = 12) {
         const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
-        let password = '';
-        const array = new Uint8Array(length);
-        crypto.getRandomValues(array);
+        let pwd = '';
+        const arr = new Uint8Array(length);
+        crypto.getRandomValues(arr);
         for (let i = 0; i < length; i++) {
-            password += chars[array[i] % chars.length];
+            pwd += chars[arr[i] % chars.length];
         }
-        return password;
+        return pwd;
     },
-    
-    // Safe text content setting (XSS prevention)
-    setText(element, text) {
-        if (element) {
-            element.textContent = text || '';
-        }
+
+    setText(el, text) {
+        if (el) el.textContent = text || '';
     },
-    
-    // Debounce function
+
     debounce(func, wait) {
         let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
+        return function(...args) {
             clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
+            timeout = setTimeout(() => func(...args), wait);
         };
     }
 };
@@ -104,204 +99,254 @@ const Utils = {
 // STORAGE MANAGEMENT
 // ============================================
 const Storage = {
-    // Settings
     getSettings() {
-        const data = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-        return data ? JSON.parse(data) : {
-            darkMode: false,
-            retentionDays: CONFIG.DEFAULT_RETENTION_DAYS
-        };
+        try {
+            const d = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+            return d ? JSON.parse(d) : { darkMode: false, retentionDays: CONFIG.DEFAULT_RETENTION_DAYS };
+        } catch (e) {
+            return { darkMode: false, retentionDays: CONFIG.DEFAULT_RETENTION_DAYS };
+        }
     },
-    
-    saveSettings(settings) {
-        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+
+    saveSettings(s) {
+        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(s));
     },
-    
-    // Areas Master
+
     getAreas() {
-        const data = localStorage.getItem(STORAGE_KEYS.AREAS);
-        return data ? JSON.parse(data) : [];
+        try {
+            const d = localStorage.getItem(STORAGE_KEYS.AREAS);
+            const a = d ? JSON.parse(d) : [];
+            return Array.isArray(a) ? a : [];
+        } catch (e) {
+            return [];
+        }
     },
-    
-    saveAreas(areas) {
-        localStorage.setItem(STORAGE_KEYS.AREAS, JSON.stringify(areas));
+
+    saveAreas(a) {
+        localStorage.setItem(STORAGE_KEYS.AREAS, JSON.stringify(Array.isArray(a) ? a : []));
     },
-    
-    // Users
+
     getUsers() {
-        const data = localStorage.getItem(STORAGE_KEYS.USERS);
-        return data ? JSON.parse(data) : [];
+        try {
+            const d = localStorage.getItem(STORAGE_KEYS.USERS);
+            const u = d ? JSON.parse(d) : [];
+            return Array.isArray(u) ? u : [];
+        } catch (e) {
+            return [];
+        }
     },
-    
-    saveUsers(users) {
-        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+
+    saveUsers(u) {
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(Array.isArray(u) ? u : []));
     },
-    
-    // Session
+
     getSession() {
-        const data = localStorage.getItem(STORAGE_KEYS.SESSION);
-        return data ? JSON.parse(data) : {
-            currentUser: null,
-            sessionExpiresAt: null,
-            failedLogin: { count: 0, cooldownUntil: null }
-        };
+        try {
+            const d = localStorage.getItem(STORAGE_KEYS.SESSION);
+            return d ? JSON.parse(d) : { currentUser: null, expiresAt: null, failedLogin: { count: 0, cooldownUntil: null } };
+        } catch (e) {
+            return { currentUser: null, expiresAt: null, failedLogin: { count: 0, cooldownUntil: null } };
+        }
     },
-    
-    saveSession(session) {
-        localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(session));
+
+    saveSession(s) {
+        localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(s));
     },
-    
-    // Attendance
+
     getAttendance() {
-        const data = localStorage.getItem(STORAGE_KEYS.ATTENDANCE);
-        return data ? JSON.parse(data) : {};
+        try {
+            const d = localStorage.getItem(STORAGE_KEYS.ATTENDANCE);
+            const a = d ? JSON.parse(d) : {};
+            return a && typeof a === 'object' ? a : {};
+        } catch (e) {
+            return {};
+        }
     },
-    
-    saveAttendance(attendance) {
-        localStorage.setItem(STORAGE_KEYS.ATTENDANCE, JSON.stringify(attendance));
+
+    saveAttendance(a) {
+        localStorage.setItem(STORAGE_KEYS.ATTENDANCE, JSON.stringify(a || {}));
     },
-    
-    getAttendanceForDate(dateString) {
-        const allAttendance = this.getAttendance();
-        return allAttendance[dateString] || {
-            areas: {},
-            audit: [],
-            updatedAt: null,
-            updatedBy: null
-        };
+
+    getAttendanceForDate(dateStr) {
+        const all = this.getAttendance();
+        if (!all[dateStr]) {
+            all[dateStr] = { areas: {}, audit: [], updatedAt: null, updatedBy: null };
+        }
+        return all[dateStr];
     },
-    
-    saveAttendanceForDate(dateString, data) {
-        const allAttendance = this.getAttendance();
-        allAttendance[dateString] = data;
-        this.saveAttendance(allAttendance);
+
+    saveAttendanceForDate(dateStr, data) {
+        const all = this.getAttendance();
+        all[dateStr] = data;
+        this.saveAttendance(all);
+    },
+
+    getDesignationHistory() {
+        try {
+            const d = localStorage.getItem(STORAGE_KEYS.DESIGNATION_HISTORY);
+            const h = d ? JSON.parse(d) : { global: [], byArea: {} };
+            return h;
+        } catch (e) {
+            return { global: [], byArea: {} };
+        }
+    },
+
+    saveDesignationHistory(h) {
+        localStorage.setItem(STORAGE_KEYS.DESIGNATION_HISTORY, JSON.stringify(h));
     }
 };
 
 // ============================================
-// AUTHENTICATION & SESSION
+// DESIGNATION HISTORY & AUTOCOMPLETE
+// ============================================
+const DesignationMgr = {
+    addToHistory(designationLabel, areaName) {
+        const norm = Utils.normalizeDesignation(designationLabel);
+        const h = Storage.getDesignationHistory();
+
+        // Global history
+        h.global = h.global.filter(d => Utils.normalizeDesignation(d) !== norm);
+        h.global.unshift(designationLabel);
+        h.global = h.global.slice(0, CONFIG.MAX_GLOBAL_DESIGNATION_HISTORY);
+
+        // Area history
+        if (!h.byArea[areaName]) h.byArea[areaName] = [];
+        h.byArea[areaName] = h.byArea[areaName].filter(d => Utils.normalizeDesignation(d) !== norm);
+        h.byArea[areaName].unshift(designationLabel);
+        h.byArea[areaName] = h.byArea[areaName].slice(0, CONFIG.MAX_AREA_DESIGNATION_HISTORY);
+
+        Storage.saveDesignationHistory(h);
+    },
+
+    getSuggestions(partial, areaName) {
+        const norm = Utils.normalizeDesignation(partial);
+        const h = Storage.getDesignationHistory();
+
+        let suggestions = [];
+        if (areaName && h.byArea[areaName]) {
+            suggestions = h.byArea[areaName].filter(d =>
+                Utils.normalizeDesignation(d).includes(norm)
+            );
+        }
+
+        if (suggestions.length < 5) {
+            const global = h.global.filter(d =>
+                Utils.normalizeDesignation(d).includes(norm) &&
+                !suggestions.includes(d)
+            );
+            suggestions = [...suggestions, ...global].slice(0, 5);
+        }
+
+        return suggestions;
+    }
+};
+
+// ============================================
+// AUTHENTICATION
 // ============================================
 const Auth = {
     async createUser(username, password, role, assignedAreas = []) {
         const users = Storage.getUsers();
-        
         if (users.find(u => u.username === username)) {
             throw new Error('Username already exists');
         }
-        
+
         const salt = await Utils.generateSalt();
-        const passwordHash = await Utils.hashPassword(password, salt);
-        
-        const user = {
+        const hash = await Utils.hashPassword(password, salt);
+
+        users.push({
             username,
             role,
             salt,
-            passwordHash,
+            passwordHash: hash,
             assignedAreas,
             createdAt: Date.now(),
             disabled: false
-        };
-        
-        users.push(user);
+        });
+
         Storage.saveUsers(users);
-        return user;
     },
-    
+
     async login(username, password) {
-        const session = Storage.getSession();
-        
-        // Check lockout
-        if (session.failedLogin.cooldownUntil && Date.now() < session.failedLogin.cooldownUntil) {
-            const remainingMs = session.failedLogin.cooldownUntil - Date.now();
-            const remainingMin = Math.ceil(remainingMs / 60000);
-            throw new Error(`Account locked. Try again in ${remainingMin} minute(s).`);
+        const sess = Storage.getSession();
+
+        if (sess.failedLogin.cooldownUntil && Date.now() < sess.failedLogin.cooldownUntil) {
+            const remaining = Math.ceil((sess.failedLogin.cooldownUntil - Date.now()) / 60000);
+            throw new Error(`Account locked. Try again in ${remaining} minute(s).`);
         }
-        
+
         const users = Storage.getUsers();
         const user = users.find(u => u.username === username);
-        
+
         if (!user) {
-            this.handleFailedLogin();
+            this._handleFailedLogin();
             throw new Error('Invalid username or password');
         }
-        
+
         if (user.disabled) {
             throw new Error('Account is disabled');
         }
-        
-        const passwordHash = await Utils.hashPassword(password, user.salt);
-        
-        if (passwordHash !== user.passwordHash) {
-            this.handleFailedLogin();
+
+        const hash = await Utils.hashPassword(password, user.salt);
+        if (hash !== user.passwordHash) {
+            this._handleFailedLogin();
             throw new Error('Invalid username or password');
         }
-        
-        // Successful login
-        session.currentUser = username;
-        session.sessionExpiresAt = Date.now() + CONFIG.SESSION_DURATION;
-        session.failedLogin = { count: 0, cooldownUntil: null };
-        Storage.saveSession(session);
-        
-        return user;
+
+        sess.currentUser = username;
+        sess.expiresAt = Date.now() + CONFIG.SESSION_DURATION;
+        sess.failedLogin = { count: 0, cooldownUntil: null };
+        Storage.saveSession(sess);
     },
-    
-    handleFailedLogin() {
-        const session = Storage.getSession();
-        session.failedLogin.count++;
-        
-        if (session.failedLogin.count >= CONFIG.MAX_LOGIN_ATTEMPTS) {
-            session.failedLogin.cooldownUntil = Date.now() + CONFIG.LOCKOUT_DURATION;
+
+    _handleFailedLogin() {
+        const sess = Storage.getSession();
+        sess.failedLogin.count++;
+        if (sess.failedLogin.count >= CONFIG.MAX_LOGIN_ATTEMPTS) {
+            sess.failedLogin.cooldownUntil = Date.now() + CONFIG.LOCKOUT_DURATION;
         }
-        
-        Storage.saveSession(session);
+        Storage.saveSession(sess);
     },
-    
+
     logout() {
-        const session = Storage.getSession();
-        session.currentUser = null;
-        session.sessionExpiresAt = null;
-        Storage.saveSession(session);
+        const sess = Storage.getSession();
+        sess.currentUser = null;
+        sess.expiresAt = null;
+        Storage.saveSession(sess);
     },
-    
+
     getCurrentUser() {
-        const session = Storage.getSession();
-        
-        if (!session.currentUser) return null;
-        
-        // Check session expiration
-        if (session.sessionExpiresAt && Date.now() > session.sessionExpiresAt) {
+        const sess = Storage.getSession();
+        if (!sess.currentUser) return null;
+
+        if (sess.expiresAt && Date.now() > sess.expiresAt) {
             this.logout();
             return null;
         }
-        
+
         const users = Storage.getUsers();
-        const user = users.find(u => u.username === session.currentUser);
-        
+        const user = users.find(u => u.username === sess.currentUser);
         if (!user || user.disabled) {
             this.logout();
             return null;
         }
-        
+
         return user;
     },
-    
+
     isAdmin() {
-        const user = this.getCurrentUser();
-        return user && user.role === 'admin';
+        const u = this.getCurrentUser();
+        return u && u.role === 'admin';
     },
-    
+
     async resetPassword(username, newPassword) {
         const users = Storage.getUsers();
         const user = users.find(u => u.username === username);
-        
         if (!user) throw new Error('User not found');
-        
+
         const salt = await Utils.generateSalt();
-        const passwordHash = await Utils.hashPassword(newPassword, salt);
-        
         user.salt = salt;
-        user.passwordHash = passwordHash;
-        
+        user.passwordHash = await Utils.hashPassword(newPassword, salt);
         Storage.saveUsers(users);
     }
 };
@@ -310,117 +355,129 @@ const Auth = {
 // AUDIT TRAIL
 // ============================================
 const Audit = {
-    addEntry(dateString, area, field, oldValue, newValue) {
+    addEntry(dateStr, areaName, designationKey, field, oldVal, newVal) {
         const user = Auth.getCurrentUser();
         if (!user) return;
-        
-        const attendanceData = Storage.getAttendanceForDate(dateString);
-        
-        const entry = {
+
+        const data = Storage.getAttendanceForDate(dateStr);
+        data.audit.unshift({
             ts: Date.now(),
             user: user.username,
-            area,
+            area: areaName,
+            designationKey,
             field,
-            from: oldValue,
-            to: newValue
-        };
-        
-        attendanceData.audit.unshift(entry);
-        
-        // Keep only last 10 entries
-        if (attendanceData.audit.length > CONFIG.MAX_AUDIT_ENTRIES) {
-            attendanceData.audit = attendanceData.audit.slice(0, CONFIG.MAX_AUDIT_ENTRIES);
+            from: oldVal,
+            to: newVal
+        });
+
+        if (data.audit.length > CONFIG.MAX_AUDIT_ENTRIES) {
+            data.audit = data.audit.slice(0, CONFIG.MAX_AUDIT_ENTRIES);
         }
-        
-        Storage.saveAttendanceForDate(dateString, attendanceData);
+
+        Storage.saveAttendanceForDate(dateStr, data);
     },
-    
-    getEntries(dateString) {
-        const attendanceData = Storage.getAttendanceForDate(dateString);
-        return attendanceData.audit || [];
+
+    getEntries(dateStr) {
+        return Storage.getAttendanceForDate(dateStr).audit || [];
     }
 };
 
 // ============================================
-// ATTENDANCE MANAGEMENT
+// ATTENDANCE WITH DESIGNATIONS
 // ============================================
 const Attendance = {
-    getAreaData(dateString, areaName) {
-        const attendanceData = Storage.getAttendanceForDate(dateString);
-        return attendanceData.areas[areaName] || {
-            presentCount: null,
-            confirmed: false,
-            updatedAt: null,
-            updatedBy: null
-        };
+    getAreaData(dateStr, areaName) {
+        const data = Storage.getAttendanceForDate(dateStr);
+        return data.areas[areaName] || { rows: [] };
     },
-    
-    updateArea(dateString, areaName, updates) {
+
+    getRow(dateStr, areaName, designationKey) {
+        const area = this.getAreaData(dateStr, areaName);
+        return area.rows.find(r => r.designationKey === designationKey);
+    },
+
+    addOrUpdateRow(dateStr, areaName, designationLabel) {
         const user = Auth.getCurrentUser();
         if (!user) return;
-        
-        const attendanceData = Storage.getAttendanceForDate(dateString);
-        const oldData = attendanceData.areas[areaName] || {
-            presentCount: null,
-            confirmed: false,
-            updatedAt: null,
-            updatedBy: null
-        };
-        
-        // Track changes for audit
-        if ('presentCount' in updates && updates.presentCount !== oldData.presentCount) {
-            Audit.addEntry(dateString, areaName, 'presentCount', oldData.presentCount, updates.presentCount);
+
+        const designationKey = Utils.normalizeDesignation(designationLabel);
+        const data = Storage.getAttendanceForDate(dateStr);
+
+        if (!data.areas[areaName]) {
+            data.areas[areaName] = { rows: [] };
         }
-        
-        if ('confirmed' in updates && updates.confirmed !== oldData.confirmed) {
-            Audit.addEntry(dateString, areaName, 'confirmed', oldData.confirmed, updates.confirmed);
+
+        let row = data.areas[areaName].rows.find(r => r.designationKey === designationKey);
+        if (!row) {
+            row = {
+                designationKey,
+                designationLabel,
+                present: null,
+                confirmed: false,
+                updatedAt: null,
+                updatedBy: null
+            };
+            data.areas[areaName].rows.push(row);
+            DesignationMgr.addToHistory(designationLabel, areaName);
         }
-        
-        attendanceData.areas[areaName] = {
-            ...oldData,
-            ...updates,
-            updatedAt: Date.now(),
-            updatedBy: user.username
-        };
-        
-        attendanceData.updatedAt = Date.now();
-        attendanceData.updatedBy = user.username;
-        
-        Storage.saveAttendanceForDate(dateString, attendanceData);
+
+        data.updatedAt = Date.now();
+        data.updatedBy = user.username;
+        Storage.saveAttendanceForDate(dateStr, data);
+
+        return row;
     },
-    
-    getTotalPresent(dateString, areas = null) {
-        const attendanceData = Storage.getAttendanceForDate(dateString);
-        const areasToCount = areas || Object.keys(attendanceData.areas);
-        
-        return areasToCount.reduce((total, areaName) => {
-            const areaData = attendanceData.areas[areaName];
-            if (areaData && typeof areaData.presentCount === 'number') {
-                return total + areaData.presentCount;
-            }
-            return total;
+
+    updateRow(dateStr, areaName, designationKey, updates) {
+        const user = Auth.getCurrentUser();
+        if (!user) return;
+
+        const data = Storage.getAttendanceForDate(dateStr);
+        if (!data.areas[areaName]) return;
+
+        const row = data.areas[areaName].rows.find(r => r.designationKey === designationKey);
+        if (!row) return;
+
+        const oldRow = { ...row };
+
+        if ('present' in updates && updates.present !== oldRow.present) {
+            Audit.addEntry(dateStr, areaName, designationKey, 'present', oldRow.present, updates.present);
+        }
+
+        if ('confirmed' in updates && updates.confirmed !== oldRow.confirmed) {
+            Audit.addEntry(dateStr, areaName, designationKey, 'confirmed', oldRow.confirmed, updates.confirmed);
+        }
+
+        Object.assign(row, updates, { updatedAt: Date.now(), updatedBy: user.username });
+        data.updatedAt = Date.now();
+        data.updatedBy = user.username;
+
+        Storage.saveAttendanceForDate(dateStr, data);
+    },
+
+    deleteRow(dateStr, areaName, designationKey) {
+        const data = Storage.getAttendanceForDate(dateStr);
+        if (!data.areas[areaName]) return;
+
+        const idx = data.areas[areaName].rows.findIndex(r => r.designationKey === designationKey);
+        if (idx >= 0) {
+            data.areas[areaName].rows.splice(idx, 1);
+            Storage.saveAttendanceForDate(dateStr, data);
+        }
+    },
+
+    getAreaTotals(dateStr, areaName) {
+        const area = this.getAreaData(dateStr, areaName);
+        const total = area.rows.reduce((sum, r) => sum + (typeof r.present === 'number' ? r.present : 0), 0);
+        const confirmed = area.rows.filter(r => r.confirmed).length;
+        return { total, confirmed, rows: area.rows.length };
+    },
+
+    getGrandTotal(dateStr, areas) {
+        return areas.reduce((sum, areaName) => {
+            const { total } = this.getAreaTotals(dateStr, areaName);
+            return sum + total;
         }, 0);
-    },
-    
-    getConfirmedCount(dateString, areas = null) {
-        const attendanceData = Storage.getAttendanceForDate(dateString);
-        const areasToCount = areas || Object.keys(attendanceData.areas);
-        
-        return areasToCount.reduce((count, areaName) => {
-            const areaData = attendanceData.areas[areaName];
-            if (areaData && areaData.confirmed) {
-                return count + 1;
-            }
-            return count;
-        }, 0);
-    },
-    
-    getUnconfirmedAreas(dateString, areas) {
-        const attendanceData = Storage.getAttendanceForDate(dateString);
-        return areas.filter(areaName => {
-            const areaData = attendanceData.areas[areaName];
-            return !areaData || !areaData.confirmed;
-        });
     }
 };
 
@@ -433,41 +490,37 @@ const UI = {
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
         Utils.setText(toast, message);
-        container.appendChild(toast);
-        
-        setTimeout(() => {
-            toast.remove();
-        }, 3000);
+        container?.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
     },
-    
+
     showModal(title, bodyHTML, buttons = []) {
         const container = document.getElementById('modal-container');
-        
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
-        
+
         const modal = document.createElement('div');
         modal.className = 'modal';
-        
+
         const header = document.createElement('div');
         header.className = 'modal-header';
         const h3 = document.createElement('h3');
         Utils.setText(h3, title);
         header.appendChild(h3);
-        
+
         const closeBtn = document.createElement('button');
         closeBtn.className = 'icon-btn';
         Utils.setText(closeBtn, '✕');
         closeBtn.onclick = () => overlay.remove();
         header.appendChild(closeBtn);
-        
+
         const body = document.createElement('div');
         body.className = 'modal-body';
         body.innerHTML = bodyHTML;
-        
+
         const footer = document.createElement('div');
         footer.className = 'modal-footer';
-        
+
         buttons.forEach(btn => {
             const button = document.createElement('button');
             button.className = `btn ${btn.className || 'btn-secondary'}`;
@@ -478,133 +531,132 @@ const UI = {
             };
             footer.appendChild(button);
         });
-        
+
         modal.appendChild(header);
         modal.appendChild(body);
         modal.appendChild(footer);
         overlay.appendChild(modal);
-        container.appendChild(overlay);
-        
-        return { overlay, modal, body };
+        container?.appendChild(overlay);
+
+        return overlay;
     },
-    
+
     confirm(message, onConfirm) {
         this.showModal('Confirm', `<p>${message}</p>`, [
             { text: 'Cancel', className: 'btn-secondary' },
             { text: 'Confirm', className: 'btn-primary', onClick: onConfirm }
         ]);
     },
-    
+
     switchScreen(screenId) {
-        document.querySelectorAll('.screen').forEach(screen => {
-            screen.style.display = 'none';
-        });
-        const targetScreen = document.getElementById(screenId);
-        if (targetScreen) {
-            targetScreen.style.display = 'block';
-        }
+        document.querySelectorAll('.screen').forEach(s => s.style.display = 'none');
+        const screen = document.getElementById(screenId);
+        if (screen) screen.style.display = 'block';
     },
-    
+
     switchView(viewId) {
-        document.querySelectorAll('.view').forEach(view => {
-            view.style.display = 'none';
-        });
-        const targetView = document.getElementById(`${viewId}-view`);
-        if (targetView) {
-            targetView.style.display = 'block';
-        }
-        
-        // Update nav buttons
-        document.querySelectorAll('.nav-btn').forEach(btn => {
-            btn.classList.remove('active');
-        });
-        const activeBtn = document.querySelector(`.nav-btn[data-view="${viewId}"]`);
-        if (activeBtn) {
-            activeBtn.classList.add('active');
-        }
+        document.querySelectorAll('.view').forEach(v => v.style.display = 'none');
+        const view = document.getElementById(`${viewId}-view`);
+        if (view) view.style.display = 'block';
+
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        const navBtn = document.querySelector(`.nav-btn[data-view="${viewId}"]`);
+        if (navBtn) navBtn.classList.add('active');
     }
 };
 
 // ============================================
-// CSV EXPORT
+// EXPORT FUNCTIONS
 // ============================================
-const CSVExport = {
-    exportSingleDay(dateString) {
+const Exports = {
+    exportDetailed(dateStr) {
         const areas = Storage.getAreas();
-        const attendanceData = Storage.getAttendanceForDate(dateString);
-        
-        let csv = 'date,area,present_count,confirmed,updated_at,updated_by\n';
-        
-        let totalPresent = 0;
-        
+        const attendance = Storage.getAttendance()[dateStr] || { areas: {} };
+
+        let csv = 'date,area,designation,present,confirmed,updated_at,updated_by\n';
+
         areas.forEach(areaName => {
-            const areaData = attendanceData.areas[areaName] || {
-                presentCount: null,
-                confirmed: false,
-                updatedAt: null,
-                updatedBy: null
-            };
-            
-            const presentCount = areaData.presentCount !== null ? areaData.presentCount : '';
-            const confirmed = areaData.confirmed ? 'true' : 'false';
-            const updatedAt = areaData.updatedAt ? Utils.formatDateTime(areaData.updatedAt) : '';
-            const updatedBy = areaData.updatedBy || '';
-            
-            csv += `${dateString},"${areaName}",${presentCount},${confirmed},"${updatedAt}","${updatedBy}"\n`;
-            
-            if (typeof areaData.presentCount === 'number') {
-                totalPresent += areaData.presentCount;
-            }
-        });
-        
-        csv += `${dateString},TOTAL,${totalPresent},,,\n`;
-        
-        this.downloadCSV(csv, `headcount_${dateString}.csv`);
-    },
-    
-    exportDateRange(fromDate, toDate) {
-        const areas = Storage.getAreas();
-        const allAttendance = Storage.getAttendance();
-        
-        let csv = 'date,area,present_count,confirmed,updated_at,updated_by\n';
-        
-        const startDate = new Date(fromDate);
-        const endDate = new Date(toDate);
-        
-        for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-            const dateString = Utils.formatDate(d);
-            const attendanceData = allAttendance[dateString] || { areas: {} };
-            
-            areas.forEach(areaName => {
-                const areaData = attendanceData.areas[areaName] || {
-                    presentCount: null,
-                    confirmed: false,
-                    updatedAt: null,
-                    updatedBy: null
-                };
-                
-                const presentCount = areaData.presentCount !== null ? areaData.presentCount : '';
-                const confirmed = areaData.confirmed ? 'true' : 'false';
-                const updatedAt = areaData.updatedAt ? Utils.formatDateTime(areaData.updatedAt) : '';
-                const updatedBy = areaData.updatedBy || '';
-                
-                csv += `${dateString},"${areaName}",${presentCount},${confirmed},"${updatedAt}","${updatedBy}"\n`;
+            const areaData = attendance.areas[areaName] || { rows: [] };
+            areaData.rows.forEach(row => {
+                const present = row.present !== null ? row.present : '';
+                const confirmed = row.confirmed ? 'true' : 'false';
+                const updatedAt = row.updatedAt ? Utils.formatDateTime(row.updatedAt) : '';
+                const updatedBy = row.updatedBy || '';
+                csv += `${dateStr},"${areaName}","${row.designationLabel}",${present},${confirmed},"${updatedAt}","${updatedBy}"\n`;
             });
-        }
-        
-        this.downloadCSV(csv, `headcount_${fromDate}_to_${toDate}.csv`);
+        });
+
+        this._downloadCSV(csv, `headcount_detailed_${dateStr}.csv`);
     },
-    
-    downloadCSV(csvContent, filename) {
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+
+    exportAreaSummary(dateStr) {
+        const areas = Storage.getAreas();
+        const attendance = Storage.getAttendance()[dateStr] || { areas: {} };
+
+        let csv = 'date,area,present_total,rows_total,rows_confirmed,status,last_updated\n';
+
+        areas.forEach(areaName => {
+            const areaData = attendance.areas[areaName] || { rows: [] };
+            const { total, confirmed, rows } = Attendance.getAreaTotals(dateStr, areaName);
+
+            let status = 'NOT_STARTED';
+            if (rows > 0) {
+                status = confirmed === rows ? 'CONFIRMED' : 'IN_PROGRESS';
+            }
+
+            const lastUpdated = areaData.rows.length > 0
+                ? Math.max(...areaData.rows.map(r => r.updatedAt || 0))
+                : null;
+
+            const lastUpdatedStr = lastUpdated ? Utils.formatDateTime(lastUpdated) : '';
+
+            csv += `${dateStr},"${areaName}",${total},${rows},${confirmed},"${status}","${lastUpdatedStr}"\n`;
+        });
+
+        this._downloadCSV(csv, `headcount_area_summary_${dateStr}.csv`);
+    },
+
+    exportDesignationSummary(dateStr) {
+        const areas = Storage.getAreas();
+        const attendance = Storage.getAttendance()[dateStr] || { areas: {} };
+
+        const designationMap = {};
+
+        areas.forEach(areaName => {
+            const areaData = attendance.areas[areaName] || { rows: [] };
+            areaData.rows.forEach(row => {
+                const key = row.designationLabel;
+                if (!designationMap[key]) {
+                    designationMap[key] = { total: 0, count: 0, areas: new Set() };
+                }
+                if (row.present) {
+                    designationMap[key].total += row.present;
+                    designationMap[key].count++;
+                }
+                designationMap[key].areas.add(areaName);
+            });
+        });
+
+        let csv = 'date,designation,present_total,total_rows,areas_count\n';
+
+        Object.entries(designationMap).forEach(([designation, data]) => {
+            csv += `${dateStr},"${designation}",${data.total},${data.count},${data.areas.size}\n`;
+        });
+
+        this._downloadCSV(csv, `headcount_designation_summary_${dateStr}.csv`);
+    },
+
+    _downloadCSV(content, filename) {
+        const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         const url = URL.createObjectURL(blob);
-        link.setAttribute('href', url);
-        link.setAttribute('download', filename);
-        link.style.visibility = 'hidden';
+        link.href = url;
+        link.download = filename;
+        link.style.display = 'none';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     }
 };
 
@@ -614,388 +666,412 @@ const CSVExport = {
 const HomeView = {
     init() {
         const dateInput = document.getElementById('home-date');
-        dateInput.value = Utils.getTodayString();
-        dateInput.addEventListener('change', () => this.render());
-        
-        document.getElementById('home-edit-today-btn').addEventListener('click', () => {
-            document.getElementById('entry-date').value = Utils.getTodayString();
-            UI.switchView('entry');
-            EntryView.render();
-        });
-        
-        document.getElementById('home-export-today-btn').addEventListener('click', () => {
-            const date = document.getElementById('home-date').value;
-            CSVExport.exportSingleDay(date);
-            UI.showToast('CSV exported successfully', 'success');
-        });
-        
+        if (dateInput) {
+            dateInput.value = Utils.getTodayString();
+            dateInput.addEventListener('change', () => this.render());
+        }
+
+        const editBtn = document.getElementById('home-edit-today-btn');
+        if (editBtn) {
+            editBtn.addEventListener('click', () => {
+                const ed = document.getElementById('entry-date');
+                if (ed) ed.value = Utils.getTodayString();
+                UI.switchView('entry');
+                EntryView.render();
+            });
+        }
+
         this.render();
     },
-    
+
     render() {
         const user = Auth.getCurrentUser();
         if (!user) return;
-        
-        const dateString = document.getElementById('home-date').value;
+
+        const dateStr = document.getElementById('home-date')?.value || Utils.getTodayString();
         const areas = user.role === 'admin' ? Storage.getAreas() : user.assignedAreas;
-        
-        // Total present
-        const totalPresent = Attendance.getTotalPresent(dateString, areas);
+
+        const totalPresent = Attendance.getGrandTotal(dateStr, areas);
         Utils.setText(document.getElementById('home-total-present'), totalPresent);
-        
-        // Confirmed count
-        const confirmedCount = Attendance.getConfirmedCount(dateString, areas);
-        Utils.setText(document.getElementById('home-confirmed-count'), `${confirmedCount} / ${areas.length}`);
-        
-        // Unconfirmed list
-        const unconfirmedAreas = Attendance.getUnconfirmedAreas(dateString, areas);
+
+        let confirmedCount = 0;
+        let totalAreas = 0;
         const unconfirmedList = document.getElementById('home-unconfirmed-list');
-        unconfirmedList.innerHTML = '';
-        
-        if (unconfirmedAreas.length === 0) {
-            const emptyMsg = document.createElement('div');
-            emptyMsg.className = 'unconfirmed-empty';
-            Utils.setText(emptyMsg, 'All areas confirmed');
-            unconfirmedList.appendChild(emptyMsg);
-        } else {
-            unconfirmedAreas.forEach(areaName => {
-                const chip = document.createElement('div');
-                chip.className = 'unconfirmed-chip';
-                Utils.setText(chip, areaName);
-                unconfirmedList.appendChild(chip);
+        if (unconfirmedList) {
+            unconfirmedList.innerHTML = '';
+
+            areas.forEach(areaName => {
+                const { total, confirmed, rows } = Attendance.getAreaTotals(dateStr, areaName);
+                if (rows > 0) {
+                    totalAreas++;
+                    confirmedCount += confirmed;
+
+                    if (confirmed < rows) {
+                        const chip = document.createElement('div');
+                        chip.className = 'unconfirmed-chip';
+                        Utils.setText(chip, `${areaName} (${confirmed}/${rows})`);
+                        unconfirmedList.appendChild(chip);
+                    }
+                }
+            });
+
+            if (unconfirmedList.children.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'unconfirmed-empty';
+                Utils.setText(empty, 'All areas confirmed');
+                unconfirmedList.appendChild(empty);
+            }
+        }
+
+        Utils.setText(document.getElementById('home-confirmed-count'), `${confirmedCount} / ${totalAreas || areas.length}`);
+
+        const tbody = document.querySelector('#home-table tbody');
+        if (tbody) {
+            tbody.innerHTML = '';
+            areas.forEach(areaName => {
+                const { total, confirmed, rows } = Attendance.getAreaTotals(dateStr, areaName);
+                const area = Attendance.getAreaData(dateStr, areaName);
+                const lastUpdate = area.rows.length > 0
+                    ? Math.max(...area.rows.map(r => r.updatedAt || 0))
+                    : null;
+
+                const row = tbody.insertRow();
+                Utils.setText(row.insertCell(), areaName);
+                Utils.setText(row.insertCell(), total);
+                Utils.setText(row.insertCell(), rows > 0 ? `${confirmed}/${rows}` : '-');
+                Utils.setText(row.insertCell(), lastUpdate ? Utils.formatDateTime(lastUpdate) : '-');
             });
         }
-        
-        // Area status table
-        const tbody = document.querySelector('#home-table tbody');
-        tbody.innerHTML = '';
-        
-        areas.forEach(areaName => {
-            const areaData = Attendance.getAreaData(dateString, areaName);
-            const row = tbody.insertRow();
-            
-            const cellArea = row.insertCell();
-            Utils.setText(cellArea, areaName);
-            
-            const cellPresent = row.insertCell();
-            Utils.setText(cellPresent, areaData.presentCount !== null ? areaData.presentCount : '-');
-            
-            const cellConfirmed = row.insertCell();
-            Utils.setText(cellConfirmed, areaData.confirmed ? '✓' : '✗');
-            
-            const cellUpdated = row.insertCell();
-            Utils.setText(cellUpdated, areaData.updatedAt ? Utils.formatDateTime(areaData.updatedAt) : '-');
-        });
     }
 };
 
 const EntryView = {
     debounceTimers: {},
-    
+
     init() {
         const dateInput = document.getElementById('entry-date');
-        dateInput.value = Utils.getTodayString();
-        dateInput.addEventListener('change', () => this.render());
-        
-        document.getElementById('entry-save-btn').addEventListener('click', () => {
-            UI.showToast('Saved', 'success');
-        });
-        
-        document.getElementById('entry-confirm-all-btn').addEventListener('click', () => {
-            this.confirmAll();
-        });
-        
-        document.getElementById('entry-clear-all-btn').addEventListener('click', () => {
-            UI.confirm('Clear all entries for this date? This cannot be undone.', () => {
-                this.clearAll();
+        if (dateInput) {
+            dateInput.value = Utils.getTodayString();
+            dateInput.addEventListener('change', () => this.render());
+        }
+
+        const saveBtn = document.getElementById('entry-save-btn');
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => {
+                UI.showToast('Saved', 'success');
             });
-        });
-        
-        document.getElementById('entry-show-audit-btn').addEventListener('click', () => {
-            this.showAudit();
-        });
-        
-        document.getElementById('audit-close-btn').addEventListener('click', () => {
-            document.getElementById('audit-drawer').style.display = 'none';
-        });
-        
+        }
+
+        const confirmBtn = document.getElementById('entry-confirm-all-btn');
+        if (confirmBtn) {
+            confirmBtn.addEventListener('click', () => this.confirmAll());
+        }
+
+        const clearBtn = document.getElementById('entry-clear-all-btn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                UI.confirm('Clear all entries for this date?', () => this.clearAll());
+            });
+        }
+
+        const auditBtn = document.getElementById('entry-show-audit-btn');
+        if (auditBtn) {
+            auditBtn.addEventListener('click', () => this.showAudit());
+        }
+
+        const auditCloseBtn = document.getElementById('audit-close-btn');
+        if (auditCloseBtn) {
+            auditCloseBtn.addEventListener('click', () => {
+                const drawer = document.getElementById('audit-drawer');
+                if (drawer) drawer.style.display = 'none';
+            });
+        }
+
         this.render();
     },
-    
+
     render() {
         const user = Auth.getCurrentUser();
         if (!user) return;
-        
-        const dateString = document.getElementById('entry-date').value;
+
+        const dateStr = document.getElementById('entry-date')?.value || Utils.getTodayString();
         const areas = user.role === 'admin' ? Storage.getAreas() : user.assignedAreas;
-        
+
         const container = document.getElementById('entry-areas-container');
+        if (!container) return;
+
         container.innerHTML = '';
-        
+
         areas.forEach(areaName => {
-            const areaData = Attendance.getAreaData(dateString, areaName);
-            
             const card = document.createElement('div');
             card.className = 'entry-area-card';
-            
+
             const header = document.createElement('div');
             header.className = 'entry-area-header';
             Utils.setText(header, areaName);
             card.appendChild(header);
-            
-            const content = document.createElement('div');
-            content.className = 'entry-area-content';
-            
-            const inputGroup = document.createElement('div');
-            inputGroup.className = 'entry-input-group';
-            
-            const label = document.createElement('label');
-            Utils.setText(label, 'Present Count');
-            inputGroup.appendChild(label);
-            
-            const input = document.createElement('input');
-            input.type = 'number';
-            input.min = '0';
-            input.step = '1';
-            input.value = areaData.presentCount !== null ? areaData.presentCount : '';
-            input.addEventListener('input', () => {
-                this.debouncedSave(dateString, areaName, 'presentCount', input.value === '' ? null : parseInt(input.value));
+
+            const areaData = Attendance.getAreaData(dateStr, areaName);
+            const rows = areaData.rows || [];
+
+            const table = document.createElement('table');
+            table.className = 'entry-area-table';
+
+            const thead = table.createTHead();
+            const headerRow = thead.insertRow();
+            ['Designation', 'Present', 'Confirm', 'Updated'].forEach(label => {
+                const th = document.createElement('th');
+                Utils.setText(th, label);
+                headerRow.appendChild(th);
             });
-            inputGroup.appendChild(input);
-            
-            const warning = document.createElement('div');
-            warning.className = 'entry-warning';
-            warning.style.display = 'none';
-            inputGroup.appendChild(warning);
-            
-            content.appendChild(inputGroup);
-            
-            const checkboxGroup = document.createElement('div');
-            checkboxGroup.className = 'entry-checkbox-group';
-            
-            const checkLabel = document.createElement('label');
-            Utils.setText(checkLabel, 'Confirmed');
-            checkboxGroup.appendChild(checkLabel);
-            
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.className = 'entry-checkbox';
-            checkbox.checked = areaData.confirmed;
-            checkbox.addEventListener('change', () => {
-                const currentValue = input.value === '' ? null : parseInt(input.value);
-                if (checkbox.checked && currentValue === null) {
-                    checkbox.checked = false;
-                    Utils.setText(warning, 'Cannot confirm without a present count');
-                    warning.style.display = 'block';
-                    setTimeout(() => {
-                        warning.style.display = 'none';
-                    }, 3000);
-                } else {
-                    warning.style.display = 'none';
-                    Attendance.updateArea(dateString, areaName, { confirmed: checkbox.checked });
+
+            const tbody = table.createTBody();
+            rows.forEach(row => {
+                const tr = tbody.insertRow();
+
+                const tdDesig = tr.insertCell();
+                Utils.setText(tdDesig, row.designationLabel);
+
+                const tdPresent = tr.insertCell();
+                const inputPresent = document.createElement('input');
+                inputPresent.type = 'number';
+                inputPresent.min = '0';
+                inputPresent.value = row.present !== null ? row.present : '';
+                inputPresent.addEventListener('change', () => {
+                    const val = inputPresent.value === '' ? null : parseInt(inputPresent.value);
+                    Attendance.updateRow(dateStr, areaName, row.designationKey, { present: val });
                     UI.showToast('Saved', 'success');
+                });
+                tdPresent.appendChild(inputPresent);
+
+                const tdConfirm = tr.insertCell();
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = row.confirmed;
+                checkbox.addEventListener('change', () => {
+                    if (checkbox.checked && (row.present === null || row.present === '')) {
+                        checkbox.checked = false;
+                        UI.showToast('Cannot confirm without a present count', 'warning');
+                        return;
+                    }
+                    Attendance.updateRow(dateStr, areaName, row.designationKey, { confirmed: checkbox.checked });
+                    UI.showToast('Saved', 'success');
+                });
+                tdConfirm.appendChild(checkbox);
+
+                const tdUpdated = tr.insertCell();
+                Utils.setText(tdUpdated, row.updatedAt ? Utils.formatDateTime(row.updatedAt) : '-');
+            });
+
+            card.appendChild(table);
+
+            const addSection = document.createElement('div');
+            addSection.className = 'entry-add-section';
+
+            const inputLabel = document.createElement('input');
+            inputLabel.type = 'text';
+            inputLabel.placeholder = 'Add designation...';
+            inputLabel.className = 'entry-designation-input';
+
+            const suggestions = document.createElement('div');
+            suggestions.className = 'entry-suggestions';
+            suggestions.style.display = 'none';
+
+            inputLabel.addEventListener('input', () => {
+                const sugg = DesignationMgr.getSuggestions(inputLabel.value, areaName);
+                suggestions.innerHTML = '';
+                if (inputLabel.value && sugg.length > 0) {
+                    sugg.forEach(s => {
+                        const div = document.createElement('div');
+                        div.className = 'entry-suggestion-item';
+                        Utils.setText(div, s);
+                        div.addEventListener('click', () => {
+                            inputLabel.value = s;
+                            suggestions.style.display = 'none';
+                            Attendance.addOrUpdateRow(dateStr, areaName, s);
+                            this.render();
+                        });
+                        suggestions.appendChild(div);
+                    });
+                    suggestions.style.display = 'block';
+                } else {
+                    suggestions.style.display = 'none';
                 }
             });
-            checkboxGroup.appendChild(checkbox);
-            
-            content.appendChild(checkboxGroup);
-            card.appendChild(content);
-            
-            if (areaData.updatedAt) {
-                const footer = document.createElement('div');
-                footer.className = 'entry-area-footer';
-                Utils.setText(footer, `Last updated: ${Utils.formatDateTime(areaData.updatedAt)} by ${areaData.updatedBy}`);
-                card.appendChild(footer);
-            }
-            
+
+            inputLabel.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && inputLabel.value.trim()) {
+                    Attendance.addOrUpdateRow(dateStr, areaName, inputLabel.value.trim());
+                    inputLabel.value = '';
+                    suggestions.style.display = 'none';
+                    this.render();
+                }
+            });
+
+            addSection.appendChild(inputLabel);
+            addSection.appendChild(suggestions);
+            card.appendChild(addSection);
+
+            const clearBtn = document.createElement('button');
+            clearBtn.className = 'btn btn-danger btn-sm';
+            Utils.setText(clearBtn, 'Clear Area');
+            clearBtn.addEventListener('click', () => {
+                UI.confirm(`Clear all entries for ${areaName}?`, () => {
+                    rows.forEach(r => Attendance.deleteRow(dateStr, areaName, r.designationKey));
+                    this.render();
+                });
+            });
+            card.appendChild(clearBtn);
+
             container.appendChild(card);
         });
     },
-    
-    debouncedSave(dateString, areaName, field, value) {
-        const key = `${dateString}-${areaName}-${field}`;
-        
-        if (this.debounceTimers[key]) {
-            clearTimeout(this.debounceTimers[key]);
-        }
-        
-        this.debounceTimers[key] = setTimeout(() => {
-            Attendance.updateArea(dateString, areaName, { [field]: value });
-            UI.showToast('Saved', 'success');
-        }, CONFIG.DEBOUNCE_DELAY);
-    },
-    
+
     confirmAll() {
         const user = Auth.getCurrentUser();
         if (!user) return;
-        
-        const dateString = document.getElementById('entry-date').value;
+
+        const dateStr = document.getElementById('entry-date')?.value || Utils.getTodayString();
         const areas = user.role === 'admin' ? Storage.getAreas() : user.assignedAreas;
-        
-        let confirmedCount = 0;
-        
+
+        let count = 0;
         areas.forEach(areaName => {
-            const areaData = Attendance.getAreaData(dateString, areaName);
-            if (areaData.presentCount !== null) {
-                Attendance.updateArea(dateString, areaName, { confirmed: true });
-                confirmedCount++;
-            }
+            const areaData = Attendance.getAreaData(dateStr, areaName);
+            (areaData.rows || []).forEach(row => {
+                if (!row.confirmed && row.present !== null && row.present !== '') {
+                    Attendance.updateRow(dateStr, areaName, row.designationKey, { confirmed: true });
+                    count++;
+                }
+            });
         });
-        
+
         this.render();
-        UI.showToast(`Confirmed ${confirmedCount} area(s)`, 'success');
+        UI.showToast(`Confirmed ${count} row(s)`, 'success');
     },
-    
+
     clearAll() {
         const user = Auth.getCurrentUser();
         if (!user) return;
-        
-        const dateString = document.getElementById('entry-date').value;
+
+        const dateStr = document.getElementById('entry-date')?.value || Utils.getTodayString();
         const areas = user.role === 'admin' ? Storage.getAreas() : user.assignedAreas;
-        
+
         areas.forEach(areaName => {
-            Attendance.updateArea(dateString, areaName, {
-                presentCount: null,
-                confirmed: false
-            });
+            const areaData = Attendance.getAreaData(dateStr, areaName);
+            const rowKeys = (areaData.rows || []).map(r => r.designationKey);
+            rowKeys.forEach(key => Attendance.deleteRow(dateStr, areaName, key));
         });
-        
+
         this.render();
         UI.showToast('All entries cleared', 'success');
     },
-    
+
     showAudit() {
-        const dateString = document.getElementById('entry-date').value;
-        const entries = Audit.getEntries(dateString);
-        
-        const auditList = document.getElementById('audit-list');
-        auditList.innerHTML = '';
-        
+        const dateStr = document.getElementById('entry-date')?.value || Utils.getTodayString();
+        const entries = Audit.getEntries(dateStr);
+
+        const list = document.getElementById('audit-list');
+        if (!list) return;
+
+        list.innerHTML = '';
         if (entries.length === 0) {
-            const emptyMsg = document.createElement('div');
-            Utils.setText(emptyMsg, 'No audit entries for this date');
-            auditList.appendChild(emptyMsg);
+            const empty = document.createElement('div');
+            Utils.setText(empty, 'No audit entries');
+            list.appendChild(empty);
         } else {
             entries.forEach(entry => {
-                const entryDiv = document.createElement('div');
-                entryDiv.className = 'audit-entry';
-                
-                const timeDiv = document.createElement('div');
-                timeDiv.className = 'audit-entry-time';
-                Utils.setText(timeDiv, Utils.formatDateTime(entry.ts));
-                entryDiv.appendChild(timeDiv);
-                
-                const detailDiv = document.createElement('div');
-                detailDiv.className = 'audit-entry-detail';
-                Utils.setText(detailDiv, `${entry.user} changed ${entry.area} ${entry.field}: ${entry.from} → ${entry.to}`);
-                entryDiv.appendChild(detailDiv);
-                
-                auditList.appendChild(entryDiv);
+                const div = document.createElement('div');
+                div.className = 'audit-entry';
+                Utils.setText(div, `${Utils.formatDateTime(entry.ts)} - ${entry.user} changed ${entry.area} (${entry.designationKey}): ${entry.field} ${entry.from} → ${entry.to}`);
+                list.appendChild(div);
             });
         }
-        
-        document.getElementById('audit-drawer').style.display = 'block';
+
+        const drawer = document.getElementById('audit-drawer');
+        if (drawer) drawer.style.display = 'block';
     }
 };
 
 const ExportView = {
     init() {
-        const singleDate = document.getElementById('export-single-date');
-        const rangeFrom = document.getElementById('export-range-from');
-        const rangeTo = document.getElementById('export-range-to');
-        
-        singleDate.value = Utils.getTodayString();
-        rangeFrom.value = Utils.getTodayString();
-        rangeTo.value = Utils.getTodayString();
-        
-        singleDate.addEventListener('change', () => this.updateSingleSummary());
-        rangeFrom.addEventListener('change', () => this.updateRangeSummary());
-        rangeTo.addEventListener('change', () => this.updateRangeSummary());
-        
-        document.getElementById('export-single-btn').addEventListener('click', () => {
-            const date = singleDate.value;
-            CSVExport.exportSingleDay(date);
-            UI.showToast('CSV exported successfully', 'success');
-        });
-        
-        document.getElementById('export-range-btn').addEventListener('click', () => {
-            const from = rangeFrom.value;
-            const to = rangeTo.value;
-            if (from > to) {
-                UI.showToast('Invalid date range', 'error');
-                return;
-            }
-            CSVExport.exportDateRange(from, to);
-            UI.showToast('CSV exported successfully', 'success');
-        });
-        
-        this.updateSingleSummary();
-        this.updateRangeSummary();
-    },
-    
-    updateSingleSummary() {
-        const date = document.getElementById('export-single-date').value;
-        const total = Attendance.getTotalPresent(date);
-        const areas = Storage.getAreas();
-        const confirmed = Attendance.getConfirmedCount(date, areas);
-        
-        const summary = document.getElementById('export-single-summary');
-        summary.innerHTML = `<p>Date: ${date}<br>Total Present: ${total}<br>Confirmed Areas: ${confirmed} / ${areas.length}</p>`;
-    },
-    
-    updateRangeSummary() {
-        const from = document.getElementById('export-range-from').value;
-        const to = document.getElementById('export-range-to').value;
-        
-        if (from > to) {
-            document.getElementById('export-range-summary').innerHTML = '<p>Invalid date range</p>';
-            return;
+        const dateInput = document.getElementById('export-single-date');
+        if (dateInput) {
+            dateInput.value = Utils.getTodayString();
         }
-        
-        const startDate = new Date(from);
-        const endDate = new Date(to);
-        const dayCount = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
-        
-        const summary = document.getElementById('export-range-summary');
-        summary.innerHTML = `<p>From: ${from}<br>To: ${to}<br>Days: ${dayCount}</p>`;
+
+        const detailedBtn = document.getElementById('export-detailed-btn');
+        if (detailedBtn) {
+            detailedBtn.addEventListener('click', () => {
+                const date = dateInput?.value || Utils.getTodayString();
+                Exports.exportDetailed(date);
+                UI.showToast('Exported detailed CSV', 'success');
+            });
+        }
+
+        const areaBtn = document.getElementById('export-area-summary-btn');
+        if (areaBtn) {
+            areaBtn.addEventListener('click', () => {
+                const date = dateInput?.value || Utils.getTodayString();
+                Exports.exportAreaSummary(date);
+                UI.showToast('Exported area summary CSV', 'success');
+            });
+        }
+
+        const desigBtn = document.getElementById('export-designation-summary-btn');
+        if (desigBtn) {
+            desigBtn.addEventListener('click', () => {
+                const date = dateInput?.value || Utils.getTodayString();
+                Exports.exportDesignationSummary(date);
+                UI.showToast('Exported designation summary CSV', 'success');
+            });
+        }
     }
 };
 
 const BackupView = {
     init() {
         const retentionInput = document.getElementById('retention-days-input');
-        const settings = Storage.getSettings();
-        retentionInput.value = settings.retentionDays;
-        
-        document.getElementById('backup-export-btn').addEventListener('click', () => {
-            this.exportBackup();
-        });
-        
-        document.getElementById('backup-import-btn').addEventListener('click', () => {
-            this.importBackup();
-        });
-        
-        document.getElementById('retention-update-btn').addEventListener('click', () => {
-            const days = parseInt(retentionInput.value);
-            if (days < 1 || days > 730) {
-                UI.showToast('Retention days must be between 1 and 730', 'error');
-                return;
-            }
-            settings.retentionDays = days;
-            Storage.saveSettings(settings);
-            UI.showToast('Retention days updated', 'success');
-            this.updateRetentionInfo();
-        });
-        
-        document.getElementById('retention-clean-btn').addEventListener('click', () => {
-            UI.confirm('Delete old attendance data? This cannot be undone.', () => {
-                this.cleanOldData();
+        if (retentionInput) {
+            const settings = Storage.getSettings();
+            retentionInput.value = settings.retentionDays;
+        }
+
+        const exportBtn = document.getElementById('backup-export-btn');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', () => this.exportBackup());
+        }
+
+        const importBtn = document.getElementById('backup-import-btn');
+        if (importBtn) {
+            importBtn.addEventListener('click', () => this.importBackup());
+        }
+
+        const updateBtn = document.getElementById('retention-update-btn');
+        if (updateBtn) {
+            updateBtn.addEventListener('click', () => {
+                const days = parseInt(retentionInput?.value || 180);
+                if (days < 1 || days > 730) {
+                    UI.showToast('Invalid retention days', 'error');
+                    return;
+                }
+                const settings = Storage.getSettings();
+                settings.retentionDays = days;
+                Storage.saveSettings(settings);
+                UI.showToast('Retention updated', 'success');
+                this.updateRetentionInfo();
             });
-        });
-        
+        }
+
+        const cleanBtn = document.getElementById('retention-clean-btn');
+        if (cleanBtn) {
+            cleanBtn.addEventListener('click', () => {
+                UI.confirm('Delete old data?', () => this.cleanOldData());
+            });
+        }
+
         this.updateRetentionInfo();
     },
-    
+
     exportBackup() {
         const backup = {
             version: 1,
@@ -1003,214 +1079,183 @@ const BackupView = {
             settings: Storage.getSettings(),
             areas: Storage.getAreas(),
             users: Storage.getUsers(),
-            attendance: Storage.getAttendance()
+            attendance: Storage.getAttendance(),
+            designationHistory: Storage.getDesignationHistory()
         };
-        
+
         const json = JSON.stringify(backup, null, 2);
         const blob = new Blob([json], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
         link.href = url;
         link.download = `headcount_backup_${Utils.getTodayString()}.json`;
         link.click();
         URL.revokeObjectURL(url);
-        
-        UI.showToast('Backup exported successfully', 'success');
+
+        UI.showToast('Backup exported', 'success');
     },
-    
+
     importBackup() {
-        const fileInput = document.getElementById('backup-import-input');
-        const file = fileInput.files[0];
-        
-        if (!file) {
-            UI.showToast('Please select a file', 'error');
+        const input = document.getElementById('backup-import-input');
+        if (!input?.files[0]) {
+            UI.showToast('Select a file', 'error');
             return;
         }
-        
+
         const reader = new FileReader();
         reader.onload = (e) => {
             try {
                 const backup = JSON.parse(e.target.result);
-                
-                // Validate backup structure
-                if (!backup.version || !backup.settings || !backup.areas || !backup.users || !backup.attendance) {
-                    throw new Error('Invalid backup file format');
+                if (!backup.version || !backup.settings) {
+                    throw new Error('Invalid backup');
                 }
-                
-                UI.confirm('Import backup? This will overwrite all existing data.', () => {
+
+                UI.confirm('Overwrite all data?', () => {
                     Storage.saveSettings(backup.settings);
-                    Storage.saveAreas(backup.areas);
-                    Storage.saveUsers(backup.users);
-                    Storage.saveAttendance(backup.attendance);
-                    
-                    UI.showToast('Backup imported successfully. Reloading...', 'success');
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 1500);
+                    Storage.saveAreas(backup.areas || []);
+                    Storage.saveUsers(backup.users || []);
+                    Storage.saveAttendance(backup.attendance || {});
+                    if (backup.designationHistory) {
+                        Storage.saveDesignationHistory(backup.designationHistory);
+                    }
+
+                    UI.showToast('Imported. Reloading...', 'success');
+                    setTimeout(() => window.location.reload(), 1500);
                 });
-            } catch (error) {
-                UI.showToast('Failed to import backup: ' + error.message, 'error');
+            } catch (err) {
+                UI.showToast('Import failed: ' + err.message, 'error');
             }
         };
-        reader.readAsText(file);
+        reader.readAsText(input.files[0]);
     },
-    
+
     updateRetentionInfo() {
         const settings = Storage.getSettings();
         const cutoffDate = new Date();
         cutoffDate.setDate(cutoffDate.getDate() - settings.retentionDays);
-        
-        const allAttendance = Storage.getAttendance();
-        const oldDates = Object.keys(allAttendance).filter(date => new Date(date) < cutoffDate);
-        
+
+        const att = Storage.getAttendance();
+        const oldCount = Object.keys(att).filter(d => new Date(d) < cutoffDate).length;
+
         const info = document.getElementById('retention-info');
-        Utils.setText(info, `Currently keeping ${settings.retentionDays} days of data. ${oldDates.length} date(s) can be cleaned.`);
+        if (info) {
+            Utils.setText(info, `Keeping ${settings.retentionDays} days. ${oldCount} date(s) can be cleaned.`);
+        }
     },
-    
+
     cleanOldData() {
         const settings = Storage.getSettings();
         const cutoffDate = new Date();
         cutoffDate.setDate(cutoffDate.getDate() - settings.retentionDays);
-        
-        const allAttendance = Storage.getAttendance();
-        let deletedCount = 0;
-        
-        Object.keys(allAttendance).forEach(date => {
-            if (new Date(date) < cutoffDate) {
-                delete allAttendance[date];
-                deletedCount++;
+
+        const att = Storage.getAttendance();
+        let deleted = 0;
+
+        Object.keys(att).forEach(d => {
+            if (new Date(d) < cutoffDate) {
+                delete att[d];
+                deleted++;
             }
         });
-        
-        Storage.saveAttendance(allAttendance);
-        UI.showToast(`Cleaned ${deletedCount} old date(s)`, 'success');
+
+        Storage.saveAttendance(att);
+        UI.showToast(`Cleaned ${deleted} date(s)`, 'success');
         this.updateRetentionInfo();
     }
 };
 
 const AdminView = {
     init() {
-        document.getElementById('admin-create-user-btn').addEventListener('click', () => {
-            this.showCreateUserModal();
-        });
-        
-        document.getElementById('admin-add-area-btn').addEventListener('click', () => {
-            this.showAddAreaModal();
-        });
-        
+        const createBtn = document.getElementById('admin-create-user-btn');
+        if (createBtn) {
+            createBtn.addEventListener('click', () => this.showCreateUserModal());
+        }
+
+        const areaBtn = document.getElementById('admin-add-area-btn');
+        if (areaBtn) {
+            areaBtn.addEventListener('click', () => this.showAddAreaModal());
+        }
+
         this.render();
     },
-    
+
     render() {
         this.renderUsersTable();
         this.renderAreasTable();
     },
-    
+
     renderUsersTable() {
-        const users = Storage.getUsers();
         const tbody = document.querySelector('#admin-users-table tbody');
+        if (!tbody) return;
+
         tbody.innerHTML = '';
-        
-        users.forEach(user => {
+        Storage.getUsers().forEach(user => {
             const row = tbody.insertRow();
-            
-            const cellUsername = row.insertCell();
-            Utils.setText(cellUsername, user.username);
-            
-            const cellRole = row.insertCell();
-            Utils.setText(cellRole, user.role);
-            
-            const cellAreas = row.insertCell();
-            Utils.setText(cellAreas, user.assignedAreas.join(', ') || 'All');
-            
-            const cellStatus = row.insertCell();
-            Utils.setText(cellStatus, user.disabled ? 'Disabled' : 'Active');
-            
-            const cellActions = row.insertCell();
-            
+            Utils.setText(row.insertCell(), user.username);
+            Utils.setText(row.insertCell(), user.role);
+            Utils.setText(row.insertCell(), user.assignedAreas.join(', ') || 'All');
+            Utils.setText(row.insertCell(), user.disabled ? 'Disabled' : 'Active');
+
+            const actions = row.insertCell();
             const resetBtn = document.createElement('button');
-            resetBtn.className = 'btn btn-secondary';
-            resetBtn.style.marginRight = '8px';
-            Utils.setText(resetBtn, 'Reset Password');
-            resetBtn.onclick = () => this.resetUserPassword(user.username);
-            cellActions.appendChild(resetBtn);
-            
+            resetBtn.className = 'btn btn-secondary btn-sm';
+            Utils.setText(resetBtn, 'Reset Pwd');
+            resetBtn.addEventListener('click', () => this.resetPassword(user.username));
+            actions.appendChild(resetBtn);
+
             const toggleBtn = document.createElement('button');
-            toggleBtn.className = 'btn btn-secondary';
-            toggleBtn.style.marginRight = '8px';
+            toggleBtn.className = 'btn btn-secondary btn-sm';
             Utils.setText(toggleBtn, user.disabled ? 'Enable' : 'Disable');
-            toggleBtn.onclick = () => this.toggleUserStatus(user.username);
-            cellActions.appendChild(toggleBtn);
-            
-            const editBtn = document.createElement('button');
-            editBtn.className = 'btn btn-secondary';
-            Utils.setText(editBtn, 'Edit');
-            editBtn.onclick = () => this.showEditUserModal(user.username);
-            cellActions.appendChild(editBtn);
+            toggleBtn.addEventListener('click', () => this.toggleUser(user.username));
+            actions.appendChild(toggleBtn);
         });
     },
-    
+
     renderAreasTable() {
-        const areas = Storage.getAreas();
         const tbody = document.querySelector('#admin-areas-table tbody');
+        if (!tbody) return;
+
         tbody.innerHTML = '';
-        
-        areas.forEach(areaName => {
+        Storage.getAreas().forEach(area => {
             const row = tbody.insertRow();
-            
-            const cellName = row.insertCell();
-            Utils.setText(cellName, areaName);
-            
-            const cellActions = row.insertCell();
-            
-            const renameBtn = document.createElement('button');
-            renameBtn.className = 'btn btn-secondary';
-            renameBtn.style.marginRight = '8px';
-            Utils.setText(renameBtn, 'Rename');
-            renameBtn.onclick = () => this.renameArea(areaName);
-            cellActions.appendChild(renameBtn);
-            
+            Utils.setText(row.insertCell(), area);
+
+            const actions = row.insertCell();
             const deleteBtn = document.createElement('button');
-            deleteBtn.className = 'btn btn-danger';
+            deleteBtn.className = 'btn btn-danger btn-sm';
             Utils.setText(deleteBtn, 'Delete');
-            deleteBtn.onclick = () => this.deleteArea(areaName);
-            cellActions.appendChild(deleteBtn);
+            deleteBtn.addEventListener('click', () => this.deleteArea(area));
+            actions.appendChild(deleteBtn);
         });
     },
-    
+
     showCreateUserModal() {
         const areas = Storage.getAreas();
-        
-        let areasHTML = '<div class="area-select-list">';
+        let areasHTML = '<div class="area-select">';
         areas.forEach(area => {
-            areasHTML += `
-                <div class="area-select-item">
-                    <input type="checkbox" id="area-${area}" value="${area}">
-                    <label for="area-${area}">${area}</label>
-                </div>
-            `;
+            areasHTML += `<label><input type="checkbox" value="${area}"> ${area}</label>`;
         });
         areasHTML += '</div>';
-        
+
         const bodyHTML = `
-            <div class="modal-form-group">
+            <div class="form-group">
                 <label>Username:</label>
-                <input type="text" id="new-user-username" autocomplete="off">
+                <input type="text" id="new-username" autocomplete="off">
             </div>
-            <div class="modal-form-group">
+            <div class="form-group">
                 <label>Role:</label>
-                <select id="new-user-role">
+                <select id="new-role">
                     <option value="user">User</option>
                     <option value="admin">Admin</option>
                 </select>
             </div>
-            <div class="modal-form-group">
+            <div class="form-group">
                 <label>Assigned Areas:</label>
                 ${areasHTML}
             </div>
-            <div id="create-user-error" class="error-message"></div>
+            <div id="create-error" class="error-message"></div>
         `;
-        
+
         UI.showModal('Create User', bodyHTML, [
             { text: 'Cancel', className: 'btn-secondary' },
             {
@@ -1218,156 +1263,73 @@ const AdminView = {
                 className: 'btn-primary',
                 closeOnClick: false,
                 onClick: async () => {
-                    const username = document.getElementById('new-user-username').value.trim();
-                    const role = document.getElementById('new-user-role').value;
-                    
-                    const selectedAreas = [];
-                    areas.forEach(area => {
-                        const checkbox = document.getElementById(`area-${area}`);
-                        if (checkbox && checkbox.checked) {
-                            selectedAreas.push(area);
-                        }
-                    });
-                    
-                    const errorDiv = document.getElementById('create-user-error');
-                    
+                    const username = document.getElementById('new-username')?.value.trim();
+                    const role = document.getElementById('new-role')?.value;
+                    const errorDiv = document.getElementById('create-error');
+
+                    const selected = Array.from(document.querySelectorAll('#new-username').parentElement?.parentElement?.querySelectorAll('input[type="checkbox"]:checked') || [])
+                        .map(c => c.value);
+
                     if (!username) {
-                        Utils.setText(errorDiv, 'Username is required');
+                        Utils.setText(errorDiv, 'Username required');
                         return;
                     }
-                    
-                    if (role === 'user' && selectedAreas.length === 0) {
-                        Utils.setText(errorDiv, 'Please select at least one area for user role');
-                        return;
-                    }
-                    
+
                     try {
-                        const tempPassword = Utils.generatePassword();
-                        await Auth.createUser(username, tempPassword, role, role === 'admin' ? [] : selectedAreas);
-                        
-                        document.querySelector('.modal-overlay').remove();
-                        
+                        const tempPwd = Utils.generatePassword();
+                        await Auth.createUser(username, tempPwd, role, selected);
+
+                        document.querySelector('.modal-overlay')?.remove();
+
                         UI.showModal('User Created', `
-                            <p>User created successfully!</p>
-                            <p><strong>Username:</strong> ${username}</p>
-                            <p><strong>Temporary Password:</strong></p>
-                            <div class="temp-password-display">${tempPassword}</div>
-                            <p style="color: var(--danger);">⚠️ Save this password now. It will not be shown again.</p>
+                            <p>Username: ${username}</p>
+                            <p>Temp Password: <code>${tempPwd}</code></p>
                         `, [
                             { text: 'OK', className: 'btn-primary' }
                         ]);
-                        
+
                         this.render();
-                    } catch (error) {
-                        Utils.setText(errorDiv, error.message);
+                    } catch (err) {
+                        Utils.setText(errorDiv, err.message);
                     }
                 }
             }
         ]);
     },
-    
-    showEditUserModal(username) {
-        const users = Storage.getUsers();
-        const user = users.find(u => u.username === username);
-        if (!user) return;
-        
-        const areas = Storage.getAreas();
-        
-        let areasHTML = '<div class="area-select-list">';
-        areas.forEach(area => {
-            const checked = user.assignedAreas.includes(area) ? 'checked' : '';
-            areasHTML += `
-                <div class="area-select-item">
-                    <input type="checkbox" id="edit-area-${area}" value="${area}" ${checked}>
-                    <label for="edit-area-${area}">${area}</label>
-                </div>
-            `;
-        });
-        areasHTML += '</div>';
-        
-        const bodyHTML = `
-            <div class="modal-form-group">
-                <label>Username:</label>
-                <input type="text" value="${username}" disabled>
-            </div>
-            <div class="modal-form-group">
-                <label>Role:</label>
-                <select id="edit-user-role">
-                    <option value="user" ${user.role === 'user' ? 'selected' : ''}>User</option>
-                    <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option>
-                </select>
-            </div>
-            <div class="modal-form-group">
-                <label>Assigned Areas:</label>
-                ${areasHTML}
-            </div>
-        `;
-        
-        UI.showModal('Edit User', bodyHTML, [
-            { text: 'Cancel', className: 'btn-secondary' },
-            {
-                text: 'Save',
-                className: 'btn-primary',
-                onClick: () => {
-                    const role = document.getElementById('edit-user-role').value;
-                    
-                    const selectedAreas = [];
-                    areas.forEach(area => {
-                        const checkbox = document.getElementById(`edit-area-${area}`);
-                        if (checkbox && checkbox.checked) {
-                            selectedAreas.push(area);
-                        }
-                    });
-                    
-                    user.role = role;
-                    user.assignedAreas = role === 'admin' ? [] : selectedAreas;
-                    
-                    Storage.saveUsers(users);
-                    UI.showToast('User updated', 'success');
-                    this.render();
-                }
-            }
-        ]);
-    },
-    
-    async resetUserPassword(username) {
-        const tempPassword = Utils.generatePassword();
-        
+
+    resetPassword(username) {
+        const tempPwd = Utils.generatePassword();
         UI.confirm(`Reset password for ${username}?`, async () => {
-            await Auth.resetPassword(username, tempPassword);
-            
+            await Auth.resetPassword(username, tempPwd);
             UI.showModal('Password Reset', `
-                <p>Password reset successfully!</p>
-                <p><strong>Username:</strong> ${username}</p>
-                <p><strong>New Temporary Password:</strong></p>
-                <div class="temp-password-display">${tempPassword}</div>
-                <p style="color: var(--danger);">⚠️ Save this password now. It will not be shown again.</p>
+                <p>Username: ${username}</p>
+                <p>New Temp Password: <code>${tempPwd}</code></p>
             `, [
                 { text: 'OK', className: 'btn-primary' }
             ]);
         });
     },
-    
-    toggleUserStatus(username) {
+
+    toggleUser(username) {
         const users = Storage.getUsers();
         const user = users.find(u => u.username === username);
-        if (!user) return;
-        
-        user.disabled = !user.disabled;
-        Storage.saveUsers(users);
-        UI.showToast(`User ${user.disabled ? 'disabled' : 'enabled'}`, 'success');
-        this.render();
+        if (user) {
+            user.disabled = !user.disabled;
+            Storage.saveUsers(users);
+            UI.showToast(`User ${user.disabled ? 'disabled' : 'enabled'}`, 'success');
+            this.render();
+        }
     },
-    
+
     showAddAreaModal() {
         const bodyHTML = `
-            <div class="modal-form-group">
+            <div class="form-group">
                 <label>Area Name:</label>
                 <input type="text" id="new-area-name" autocomplete="off">
             </div>
             <div id="add-area-error" class="error-message"></div>
         `;
-        
+
         UI.showModal('Add Area', bodyHTML, [
             { text: 'Cancel', className: 'btn-secondary' },
             {
@@ -1375,314 +1337,250 @@ const AdminView = {
                 className: 'btn-primary',
                 closeOnClick: false,
                 onClick: () => {
-                    const areaName = document.getElementById('new-area-name').value.trim();
+                    const name = document.getElementById('new-area-name')?.value.trim();
                     const errorDiv = document.getElementById('add-area-error');
-                    
-                    if (!areaName) {
-                        Utils.setText(errorDiv, 'Area name is required');
+
+                    if (!name) {
+                        Utils.setText(errorDiv, 'Name required');
                         return;
                     }
-                    
+
                     const areas = Storage.getAreas();
-                    if (areas.includes(areaName)) {
-                        Utils.setText(errorDiv, 'Area already exists');
+                    if (areas.includes(name)) {
+                        Utils.setText(errorDiv, 'Already exists');
                         return;
                     }
-                    
-                    areas.push(areaName);
+
+                    areas.push(name);
                     Storage.saveAreas(areas);
-                    
-                    document.querySelector('.modal-overlay').remove();
+
+                    document.querySelector('.modal-overlay')?.remove();
                     UI.showToast('Area added', 'success');
                     this.render();
                 }
             }
         ]);
     },
-    
-    renameArea(oldName) {
-        const bodyHTML = `
-            <div class="modal-form-group">
-                <label>Current Name:</label>
-                <input type="text" value="${oldName}" disabled>
-            </div>
-            <div class="modal-form-group">
-                <label>New Name:</label>
-                <input type="text" id="rename-area-name" value="${oldName}">
-            </div>
-            <div id="rename-area-error" class="error-message"></div>
-        `;
-        
-        UI.showModal('Rename Area', bodyHTML, [
-            { text: 'Cancel', className: 'btn-secondary' },
-            {
-                text: 'Rename',
-                className: 'btn-primary',
-                closeOnClick: false,
-                onClick: () => {
-                    const newName = document.getElementById('rename-area-name').value.trim();
-                    const errorDiv = document.getElementById('rename-area-error');
-                    
-                    if (!newName) {
-                        Utils.setText(errorDiv, 'Area name is required');
-                        return;
-                    }
-                    
-                    if (newName === oldName) {
-                        document.querySelector('.modal-overlay').remove();
-                        return;
-                    }
-                    
-                    const areas = Storage.getAreas();
-                    if (areas.includes(newName)) {
-                        Utils.setText(errorDiv, 'Area name already exists');
-                        return;
-                    }
-                
-                // Update areas master
-                const index = areas.indexOf(oldName);
-                areas[index] = newName;
+
+    deleteArea(area) {
+        UI.confirm(`Delete "${area}"?`, () => {
+            const areas = Storage.getAreas();
+            const idx = areas.indexOf(area);
+            if (idx >= 0) {
+                areas.splice(idx, 1);
                 Storage.saveAreas(areas);
-                
-                // Update users' assigned areas
-                const users = Storage.getUsers();
-                users.forEach(user => {
-                    const areaIndex = user.assignedAreas.indexOf(oldName);
-                    if (areaIndex !== -1) {
-                        user.assignedAreas[areaIndex] = newName;
-                    }
-                });
-                Storage.saveUsers(users);
-                
-                // Update attendance data
-                const allAttendance = Storage.getAttendance();
-                Object.keys(allAttendance).forEach(date => {
-                    const dayData = allAttendance[date];
-                    if (dayData.areas[oldName]) {
-                        dayData.areas[newName] = dayData.areas[oldName];
-                        delete dayData.areas[oldName];
-                    }
-                });
-                Storage.saveAttendance(allAttendance);
-                
-                document.querySelector('.modal-overlay').remove();
-                UI.showToast('Area renamed', 'success');
+                UI.showToast('Area deleted', 'success');
                 this.render();
             }
-        }
-    ]);
-},
-
-deleteArea(areaName) {
-    UI.confirm(`Delete area "${areaName}"? Historical data will be preserved but the area will be removed from the master list.`, () => {
-        const areas = Storage.getAreas();
-        const index = areas.indexOf(areaName);
-        areas.splice(index, 1);
-        Storage.saveAreas(areas);
-        
-        // Remove from users' assigned areas
-        const users = Storage.getUsers();
-        users.forEach(user => {
-            const areaIndex = user.assignedAreas.indexOf(areaName);
-            if (areaIndex !== -1) {
-                user.assignedAreas.splice(areaIndex, 1);
-            }
         });
-        Storage.saveUsers(users);
-        
-        UI.showToast('Area deleted', 'success');
-        this.render();
-    });
-}
+    }
 };
+
 // ============================================
 // APP INITIALIZATION
 // ============================================
 const App = {
-init() {
-    // Basic wiring that doesn't depend on auth state
-    this.setupTheme();
-    this.setupNavigation();
-    this.setupLogout();
-
-    // FIRST-RUN / RECOVERY FLOW:
-    // If no users (or no admin), show Create Admin and stop here.
-    const didShowCreateAdmin = this.checkFirstRun();
-    if (didShowCreateAdmin) return;
-
-    // Normal flow: decide between app vs login
-    const user = Auth.getCurrentUser();
-    if (user) {
-        this.showMainApp();
-    } else {
-        UI.switchScreen('login-screen');
-        this.setupLoginForm();
-    }
-},
-
-checkFirstRun() {
-    // Always treat missing/invalid users as empty array
-    const users = Storage.getUsers() || [];
-    const hasAdmin = Array.isArray(users) && users.some(u => u && u.role === 'admin' && !u.disabled);
-
-    // If no users OR no admin, force Create Admin
-    if (!Array.isArray(users) || users.length === 0 || !hasAdmin) {
-        // Preload default areas if needed
-        const areas = Storage.getAreas() || [];
-        if (!Array.isArray(areas) || areas.length === 0) {
-            Storage.saveAreas(CONFIG.DEFAULT_AREAS);
+    init() {
+        // CRITICAL FIRST-RUN CHECK
+        if (this.checkFirstRun()) {
+            return; // STOP HERE - do not proceed
         }
 
-        UI.switchScreen('create-admin-screen');
-        this.setupCreateAdminForm();
-        return true;
-    }
+        // Setup UI basics
+        this.setupTheme();
+        this.setupNavigation();
+        this.setupLogout();
 
-    return false;
-},
-
-setupCreateAdminForm() {
-    document.getElementById('create-admin-btn').addEventListener('click', async () => {
-        const username = document.getElementById('admin-username').value.trim();
-        const password = document.getElementById('admin-password').value;
-        const confirmPassword = document.getElementById('admin-password-confirm').value;
-        const errorDiv = document.getElementById('admin-error');
-        
-        Utils.setText(errorDiv, '');
-        
-        if (!username || !password) {
-            Utils.setText(errorDiv, 'Username and password are required');
-            return;
-        }
-        
-        if (password !== confirmPassword) {
-            Utils.setText(errorDiv, 'Passwords do not match');
-            return;
-        }
-        
-        if (password.length < 6) {
-            Utils.setText(errorDiv, 'Password must be at least 6 characters');
-            return;
-        }
-        
-        try {
-            await Auth.createUser(username, password, 'admin');
-            UI.showToast('Admin account created', 'success');
+        // Check if already logged in
+        const user = Auth.getCurrentUser();
+        if (user) {
+            this.showMainApp();
+        } else {
             UI.switchScreen('login-screen');
-        } catch (error) {
-            Utils.setText(errorDiv, error.message);
+            this.setupLoginForm();
         }
-    });
-},
+    },
 
-setupLoginForm() {
-    document.getElementById('login-btn').addEventListener('click', () => {
-        this.handleLogin();
-    });
-    
-    document.getElementById('login-password').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-            this.handleLogin();
-        }
-    });
-},
+    checkFirstRun() {
+        const users = Storage.getUsers();
+        const hasAdmin = users.some(u => u.role === 'admin' && !u.disabled);
 
-async handleLogin() {
-    const username = document.getElementById('login-username').value.trim();
-    const password = document.getElementById('login-password').value;
-    const errorDiv = document.getElementById('login-error');
-    
-    Utils.setText(errorDiv, '');
-    
-    if (!username || !password) {
-        Utils.setText(errorDiv, 'Username and password are required');
-        return;
-    }
-    
-    try {
-        await Auth.login(username, password);
-        this.showMainApp();
-    } catch (error) {
-        Utils.setText(errorDiv, error.message);
-    }
-},
-
-showMainApp() {
-    UI.switchScreen('app-screen');
-    
-    const user = Auth.getCurrentUser();
-    if (user && user.role === 'admin') {
-        document.getElementById('admin-nav-btn').style.display = 'flex';
-    }
-    
-    // Initialize views
-    HomeView.init();
-    EntryView.init();
-    ExportView.init();
-    BackupView.init();
-    
-    if (user && user.role === 'admin') {
-        AdminView.init();
-    }
-    
-    // Show home view by default
-    UI.switchView('home');
-},
-
-setupNavigation() {
-    document.querySelectorAll('.nav-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const view = btn.dataset.view;
-            UI.switchView(view);
-            
-            // Refresh view data
-            if (view === 'home') HomeView.render();
-            if (view === 'entry') EntryView.render();
-            if (view === 'export') {
-                ExportView.updateSingleSummary();
-                ExportView.updateRangeSummary();
+        if (users.length === 0 || !hasAdmin) {
+            // First run: no users or no admin
+            const areas = Storage.getAreas();
+            if (areas.length === 0) {
+                Storage.saveAreas(CONFIG.DEFAULT_AREAS);
             }
-            if (view === 'backup') BackupView.updateRetentionInfo();
-            if (view === 'admin') AdminView.render();
-        });
-    });
-},
 
-setupLogout() {
-    document.getElementById('logout-btn').addEventListener('click', () => {
-        UI.confirm('Are you sure you want to logout?', () => {
-            Auth.logout();
-            window.location.reload();
-        });
-    });
-},
+            this.setupTheme();
+            this.setupLogout();
 
-setupTheme() {
-    const settings = Storage.getSettings();
-    if (settings.darkMode) {
-        document.body.setAttribute('data-theme', 'dark');
-        Utils.setText(document.getElementById('theme-toggle'), '☀️');
-    }
-    
-    document.getElementById('theme-toggle').addEventListener('click', () => {
+            UI.switchScreen('create-admin-screen');
+            this.setupCreateAdminForm();
+
+            return true; // Signal that we handled first run
+        }
+
+        return false;
+    },
+
+    setupCreateAdminForm() {
+        const btn = document.getElementById('create-admin-btn');
+        if (!btn) return;
+
+        btn.addEventListener('click', async () => {
+            const username = document.getElementById('admin-username')?.value.trim();
+            const password = document.getElementById('admin-password')?.value;
+            const confirm = document.getElementById('admin-password-confirm')?.value;
+            const errorDiv = document.getElementById('admin-error');
+
+            Utils.setText(errorDiv, '');
+
+            if (!username || !password) {
+                Utils.setText(errorDiv, 'Username and password required');
+                return;
+            }
+
+            if (password !== confirm) {
+                Utils.setText(errorDiv, 'Passwords do not match');
+                return;
+            }
+
+            if (password.length < 6) {
+                Utils.setText(errorDiv, 'Password must be 6+ characters');
+                return;
+            }
+
+            try {
+                await Auth.createUser(username, password, 'admin');
+                document.getElementById('admin-username').value = '';
+                document.getElementById('admin-password').value = '';
+                document.getElementById('admin-password-confirm').value = '';
+
+                UI.showToast('Admin created', 'success');
+                UI.switchScreen('login-screen');
+                this.setupLoginForm();
+            } catch (err) {
+                Utils.setText(errorDiv, err.message);
+            }
+        });
+    },
+
+    setupLoginForm() {
+        const btn = document.getElementById('login-btn');
+        if (btn) {
+            btn.addEventListener('click', () => this.handleLogin());
+        }
+
+        const pwd = document.getElementById('login-password');
+        if (pwd) {
+            pwd.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') this.handleLogin();
+            });
+        }
+    },
+
+    async handleLogin() {
+        const username = document.getElementById('login-username')?.value.trim();
+        const password = document.getElementById('login-password')?.value;
+        const errorDiv = document.getElementById('login-error');
+
+        Utils.setText(errorDiv, '');
+
+        if (!username || !password) {
+            Utils.setText(errorDiv, 'Username and password required');
+            return;
+        }
+
+        try {
+            await Auth.login(username, password);
+            document.getElementById('login-username').value = '';
+            document.getElementById('login-password').value = '';
+            this.showMainApp();
+        } catch (err) {
+            Utils.setText(errorDiv, err.message);
+        }
+    },
+
+    showMainApp() {
+        UI.switchScreen('app-screen');
+        this.setupNavigation();
+        this.setupLogout();
+
+        const user = Auth.getCurrentUser();
+        const adminBtn = document.getElementById('admin-nav-btn');
+        if (adminBtn) {
+            adminBtn.style.display = (user && user.role === 'admin') ? 'flex' : 'none';
+        }
+
+        HomeView.init();
+        EntryView.init();
+        ExportView.init();
+        BackupView.init();
+
+        if (user && user.role === 'admin') {
+            AdminView.init();
+        }
+
+        UI.switchView('home');
+    },
+
+    setupNavigation() {
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const view = btn.dataset.view;
+                UI.switchView(view);
+
+                if (view === 'home') HomeView.render();
+                if (view === 'entry') EntryView.render();
+                if (view === 'admin') AdminView.render();
+            });
+        });
+    },
+
+    setupLogout() {
+        const btn = document.getElementById('logout-btn');
+        if (btn) {
+            btn.addEventListener('click', () => {
+                UI.confirm('Logout?', () => {
+                    Auth.logout();
+                    window.location.reload();
+                });
+            });
+        }
+    },
+
+    setupTheme() {
+        const toggle = document.getElementById('theme-toggle');
+        if (!toggle) return;
+
         const settings = Storage.getSettings();
-        settings.darkMode = !settings.darkMode;
-        Storage.saveSettings(settings);
-        
         if (settings.darkMode) {
             document.body.setAttribute('data-theme', 'dark');
-            Utils.setText(document.getElementById('theme-toggle'), '☀️');
+            Utils.setText(toggle, '☀️');
         } else {
-            document.body.removeAttribute('data-theme');
-            Utils.setText(document.getElementById('theme-toggle'), '🌙');
+            Utils.setText(toggle, '🌙');
         }
-    });
-}
-};
-// Start the application when DOM is ready
-if (document.readyState === 'loading') {
-document.addEventListener('DOMContentLoaded', () => App.init());
-} else {
-App.init();
 
+        toggle.addEventListener('click', () => {
+            const s = Storage.getSettings();
+            s.darkMode = !s.darkMode;
+            Storage.saveSettings(s);
+
+            if (s.darkMode) {
+                document.body.setAttribute('data-theme', 'dark');
+                Utils.setText(toggle, '☀️');
+            } else {
+                document.body.removeAttribute('data-theme');
+                Utils.setText(toggle, '🌙');
+            }
+        });
+    }
+};
+
+// Start app when DOM ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => App.init());
+} else {
+    App.init();
 }
